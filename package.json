@@ -1,0 +1,8 @@
+{
+  "name": "catalogue-vinted",
+  "version": "1.0.0",
+  "description": "Catalogue de cartes Pokémon pour préparer les annonces Vinted",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" }
+}
