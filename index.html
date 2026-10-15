@@ -142,11 +142,9 @@ label.l{display:block;font-size:15px;font-weight:600;margin:16px 0 6px}
   <input id="fPhotos" type="file" accept="image/*" multiple style="display:none">
   <div class="photos" id="fPrev"></div>
 
-  <label class="l">Pokémon</label><input id="fName" placeholder="Nom (ex. Dracaufeu)" autocomplete="off">
-  <div class="row" style="margin-top:10px">
-    <input id="fNum" placeholder="Numéro (4/102)" autocomplete="off">
-    <input id="fPrice" inputmode="decimal" placeholder="Prix en €" autocomplete="off">
-  </div>
+  <label class="l">Carte</label><input id="fCombo" placeholder="Nom et numéro (ex. Dracaufeu 4/102)" autocomplete="off">
+  <input id="fName" type="hidden"><input id="fNum" type="hidden">
+  <input id="fPrice" style="margin-top:10px" inputmode="decimal" placeholder="Prix en €" autocomplete="off">
   <label class="l">Type de carte</label>
   <div class="seg" id="fKind"><button data-v="normale" class="on">Normale</button><button data-v="reverse">Reverse</button><button data-v="holo">Holo</button></div>
   <label class="l">Série</label><input id="fSerie" placeholder="Set de base" autocomplete="off">
@@ -158,13 +156,13 @@ label.l{display:block;font-size:15px;font-weight:600;margin:16px 0 6px}
     <div id="fRes"></div>
     <div id="fCard"></div>
     <div class="row" style="margin-top:10px">
-      <a class="btn ghost sm" href="https://www.cardshunter.fr/" target="_blank" rel="noopener">Ouvrir Cardshunter</a>
+      <a class="btn ghost sm" id="fCH" href="https://www.cardshunter.fr/" target="_blank" rel="noopener">Ouvrir Cardshunter</a>
       <button class="btn ghost sm" type="button" id="fPaste">Coller le titre</button>
     </div>
-    <p class="note">« Carte Pokémon » est ajouté au début s’il manque.</p>
+    <p class="note">« Carte Pokémon » est ajouté au début s’il manque. Le bouton Cardshunter copie aussi le nom et le numéro, à coller dans la recherche du site si besoin.</p>
   </div>
 </div></div>
-<div class="sticky" id="stForm"><div><button class="btn" id="fSave">Enregistrer la carte</button></div></div>
+<div class="sticky" id="stForm"><div><button class="btn ghost" id="fSave">Enregistrer</button><button class="btn" id="fSaveNext">Enregistrer + suivante ➜</button></div></div>
 
 <div class="ov" id="ovDetail"><div id="dBody"></div></div>
 <div class="sticky" id="stDetail"><div id="dBar"></div></div>
@@ -294,14 +292,15 @@ function openForm(c){
   editing = c || null; titleTouched = false; $('fRes').innerHTML = '';
   $('fTitle').textContent = c ? 'Modifier la carte' : 'Nouvelle carte';
   newPhotos = c ? c.photos.slice() : []; $('fPhotos').value = ''; $('fCam').value = '';
-  $('fName').value = c ? c.name : ''; $('fNum').value = c ? c.num : ''; $('fPrice').value = c ? c.price : ''; $('fSerie').value = c ? c.serie : '';
+  $('fName').value = c ? c.name : ''; $('fNum').value = c ? c.num : ''; $('fCombo').value = c ? ((c.name || '') + ' ' + (c.num || '')).trim() : ''; updCH(); $('fPrice').value = c ? c.price : ''; $('fSerie').value = c ? c.serie : '';
   setKind(c ? c.kind : 'normale');
   if (c && c.customTitle){ titleTouched = true; $('fFinal').value = c.customTitle; } else autoTitle();
   showCard(c ? c.image : ''); lastAuto = '';
   showPrev(); show('ovForm', true); show('stForm', true); $('ovForm').scrollTop = 0;
+  $('fSaveNext').style.display = c ? 'none' : '';
 }
 function closeForm(){ show('ovForm', false); show('stForm', false); }
-['fName','fNum','fSerie'].forEach(function(id){ $(id).addEventListener('input', autoTitle); });
+$('fSerie').addEventListener('input', autoTitle);
 $('fFinal').addEventListener('input', function(){ titleTouched = true; });
 $('fFinal').addEventListener('blur', function(){ if (titleTouched && $('fFinal').value.trim()) $('fFinal').value = normTitle($('fFinal').value); });
 function addFiles(e){ var inp = e.target, files = Array.prototype.slice.call(inp.files || []); Promise.all(files.map(shrink)).then(function(bl){ newPhotos = newPhotos.concat(bl); showPrev(); inp.value = ''; }); }
@@ -343,15 +342,47 @@ function runSearch(auto){
     });
   }).catch(function(){ note(auto ? '' : 'Recherche indisponible ici. Utilise Cardshunter puis « Coller le titre ».'); });
 }
-$('fSearch').onclick = function(){ runSearch(false); };
-['fName','fNum'].forEach(function(id){ $(id).addEventListener('input', function(){ clearTimeout(sTimer); sTimer = setTimeout(function(){ runSearch(true); }, 800); }); });
-$('fSave').onclick = function(){
-  if (!$('fName').value.trim()){ toast('Indique le nom du Pokémon'); $('fName').focus(); return; }
-  var c = editing || {id:'c' + Date.now(), created:Date.now(), a:false, b:false, steps:{a:{},b:{}}};
+$('fSearch').onclick = function(){ syncCombo(); runSearch(false); };
+function parseCombo(s){
+  s = String(s || '').replace(/\s*\/\s*/g, '/').replace(/\s+/g, ' ').trim();
+  var p = s.split(' '), last = p[p.length - 1], num = '';
+  if (/^[A-Za-z]{0,4}\d+[A-Za-z]?(\/[A-Za-z]{0,4}\d+)?$/.test(last)){ num = last; p.pop(); }
+  return {name: p.join(' '), num: num};
+}
+function slugName(n){
+  return String(n || '').toLowerCase().trim()
+    .replace(/\s+(ex|gx|vmax|vstar|v|de|du|des)(\s.*)?$/, '').replace(/\s+d['’].*$/, '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[’'.:]/g, '')
+    .replace(/\s+/g, '-');
+}
+function updCH(){
+  var n = $('fName').value.trim(), nu = $('fNum').value.trim(), q = (n + ' ' + nu).trim(), u = 'https://www.cardshunter.fr/';
+  if (n && nu) u += '?s=' + encodeURIComponent(q).replace(/%20/g, '+');
+  else if (n) u += 'pokemon/' + slugName(n) + '/';
+  $('fCH').href = u; $('fCH').setAttribute('data-q', q);
+}
+function syncCombo(){ var r = parseCombo($('fCombo').value); $('fName').value = r.name; $('fNum').value = r.num; updCH(); autoTitle(); }
+$('fCombo').addEventListener('input', function(){ syncCombo(); clearTimeout(sTimer); sTimer = setTimeout(function(){ runSearch(true); }, 800); });
+$('fCH').addEventListener('click', function(){ var q = this.getAttribute('data-q'); if (q && navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(q).catch(function(){}); });
+function saveForm(next){
+  syncCombo();
+  if (!$('fName').value.trim()){ toast('Indique le nom du Pokémon'); $('fCombo').focus(); return; }
+  var c = editing || {id:'c' + Date.now(), created:Date.now(), a:false, b:false, steps:{a:{},b:{}}}, wasEditing = !!editing;
   c.name = $('fName').value.trim(); c.num = $('fNum').value.trim(); c.price = $('fPrice').value.trim(); c.kind = kind; c.serie = $('fSerie').value.trim(); c.photos = newPhotos; c.image = cardImg;
   var auto = makeTitle(c), typed = $('fFinal').value.trim(); c.customTitle = (typed && typed !== auto) ? typed : '';
-  saveCard(c).then(function(){ if (!editing) cards.push(c); closeForm(); render(); toast('Carte enregistrée'); if (!editing) showDetail(c.id, 'a'); });
-};
+  saveCard(c).then(function(){
+    if (!wasEditing) cards.push(c);
+    render();
+    if (next && !wasEditing){
+      var s = c.serie; openForm(null); $('fSerie').value = s; autoTitle(); toast('Enregistrée · carte suivante');
+      try { $('fCombo').focus(); } catch(e){}
+    } else {
+      closeForm(); toast('Carte enregistrée'); if (!wasEditing) showDetail(c.id, 'a');
+    }
+  });
+}
+$('fSave').onclick = function(){ saveForm(false); };
+$('fSaveNext').onclick = function(){ saveForm(true); };
 
 /* fiche : checklist par compte */
 function showDetail(id, acct){
@@ -376,10 +407,10 @@ function showDetail(id, acct){
     tx.appendChild(el('div','lb',label)); tx.appendChild(el('div','vl',value));
     r.appendChild(ck); r.appendChild(tx); r.appendChild(el('div','go',go)); r.onclick = action; b.appendChild(r);
   }
-  step('photos', '1. Photos (' + c.photos.length + ')', 'Envoie-les vers Vinted ou enregistre-les dans Photos', 'Envoyer', function(){
+  step('photos', '1. Photos (' + c.photos.length + ')', 'Touche puis « Enregistrer les images » pour les mettre dans Photos. Dans Vinted ou Whatnot, choisis-les ensuite dans Récentes.', 'Enregistrer', function(){
     var files = c.photos.map(function(p,i){ var ty = p.type || 'image/jpeg', ex = (ty.split('/')[1] || 'jpg').replace('jpeg','jpg'); return new File([p], (c.name || 'carte') + '-' + (i+1) + '.' + ex, {type:ty}); });
     if (navigator.canShare && navigator.canShare({files:files})) navigator.share({files:files}).then(function(){ done('photos'); }).catch(function(){});
-    else toast('Partage indisponible ici');
+    else toast('Partage indisponible : appuie longuement sur une photo puis « Enregistrer »');
   });
   step('titre', '2. Titre', finalTitle(c), 'Copier', function(){ copyText(finalTitle(c), 'Titre'); done('titre'); });
   step('prix', '3. Prix', c.price ? priceTxt(c) : 'Prix à définir', 'Copier', function(){ copyText(String(c.price || '').replace('.',','), 'Prix'); done('prix'); });
@@ -393,9 +424,18 @@ function showDetail(id, acct){
   var bar = $('dBar'); bar.innerHTML = '';
   var open = el('a','btn ghost','Ouvrir ' + (acct === 'w' ? 'Whatnot' : 'Vinted ' + ACC[acct].n)); open.href = ACC[acct].u; open.target = '_blank'; open.rel = 'noopener';
   var pub = el('button','btn pub' + (c[acct] ? ' on' : ''), c[acct] ? 'Publiée ✓' : 'Publiée sur ' + lab(acct));
-  pub.onclick = function(){ c[acct] = !c[acct]; saveCard(c); showDetail(id, acct); };
+  pub.onclick = function(){
+    c[acct] = !c[acct]; saveCard(c);
+    if (c[acct]){ var nx = nextToPublish(acct, c.id); if (nx){ toast('Suivante : ' + (nx.name || 'carte')); showDetail(nx.id, acct); return; } toast('Tout est publié sur ' + lab(acct) + ' 🎉'); }
+    showDetail(id, acct);
+  };
   bar.appendChild(open); bar.appendChild(pub);
   show('ovDetail', true); show('stDetail', true);
+}
+
+function nextToPublish(acct, exceptId){
+  var l = cards.filter(function(c){ return isReady(c) && !c[acct] && c.id !== exceptId; }).sort(function(a,b){ return a.created - b.created; });
+  return l[0] || null;
 }
 
 /* description */
@@ -480,6 +520,20 @@ $('qh').addEventListener('keydown', function(e){ if (e.key === 'Enter'){ $('q').
 $('bDesc2').onclick = function(){ $('bDesc').click(); };
 function renderHome(){
   var box = $('homeTiles'); box.innerHTML = ''; var N = cards.length;
+  var hq = $('hq'); if (!hq){ hq = el('div','box'); hq.id = 'hq'; box.parentNode.insertBefore(hq, box); }
+  hq.innerHTML = ''; hq.hidden = !['a','b','w'].some(function(k){ return nextToPublish(k); });
+  if (!hq.hidden){
+    var ttl = el('div','','Publier en série'); ttl.style.cssText = 'font-weight:650;margin-bottom:8px'; hq.appendChild(ttl);
+    var rw = el('div','row');
+    ['a','b','w'].forEach(function(k){
+      var n = cards.filter(function(c){ return isReady(c) && !c[k]; }).length;
+      var b = el('button','btn ghost sm', lab(k) + ' (' + n + ')'); b.disabled = !n;
+      b.onclick = function(){ var f = nextToPublish(k); if (f) showDetail(f.id, k); };
+      rw.appendChild(b);
+    });
+    hq.appendChild(rw);
+    hq.appendChild(el('p','note','Enchaîne les cartes prêtes sur un seul compte : « Publiée » ouvre la suivante.'));
+  }
   var dr = cards.filter(function(c){ return !isReady(c); }).length, dn = cards.filter(isDone).length, rd = N - dr - dn;
   [['Mes cartes', N, '🃏', 'all'], ['Prêtes à publier', rd, '✅', 'todo'], ['Brouillons', dr, '📝', 'draft'], ['Terminées', dn, '🏁', 'done'], ['Statistiques', '', '📊', '#stats'], ['Export Whatnot', '', '📤', '#exp']].forEach(function(x){
     var t = el('div','htile'); t.appendChild(el('div','lb',x[0])); if (x[1] !== '') t.appendChild(el('div','nb',x[1])); t.appendChild(el('div','ic',x[2]));
